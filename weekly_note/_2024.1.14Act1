@@ -1,0 +1,379 @@
+## -2024.1.14周记
+
+又浅复盘了一下期末考试之前看过的rust语言部分，同时学习了一些RISC-V指令集的东西。
+
+大概跑一遍第一章文档给的代码（熟悉一下代码），试着理解了一下文档给的理论知识内容，每节给出的代码树的逻辑
+
+因为这周是结尾刚开始学习，也没太深入了解，都是大致过一下（后续补充笔记）
+
+
+
+## 第一章 应用程序执行环境与基本执行环境
+
+## **应用程序执行环境与平台支持**
+
+#### 执行应用程序
+
+在终端输入命令`cargo new os`时，它会在当前目录下创建一个名为"os"的新的二进制（应用程序）包。输出信息"Created binary (application) 'os' package"表示该包已成功创建。
+
+```
+os
+├── Cargo.toml
+└── src
+    └── main.rs
+```
+
+其中，`os`是项目的根目录。在根目录下有两个文件：`Cargo.toml`和一个名为`src`的目录。`Cargo.toml`是Cargo项目的配置文件，用于指定依赖项和其他项目设置。`src`目录包含项目的源代码文件，其中包括一个名为`main.rs`的文件，它是项目的主要入口点。
+
+##### 构建并运行项目：
+
+1. cd到os目录下。
+2. 输入命令`cargo run`并按下回车键。
+
+这将触发Cargo构建和运行项目的操作。首先，它会编译代码（输出显示为"Compiling os..."），然后运行生成的可执行文件（输出显示为"Running `target/debug/os`"）。在终端窗口中，会看到打印出的"Hello, world!"消息，这表明应用程序成功运行。
+
+#### 理解应用程序执行环境
+
+#### 平台与目标三元组
+
+```CLI
+rustc --version --verbose
+   rustc 1.61.0-nightly (68369a041 2022-02-22)
+   binary: rustc
+   commit-hash: 68369a041cea809a87e5bd80701da90e0e0a4799
+   commit-date: 2022-02-22
+   host: x86_64-unknown-linux-gnu
+   release: 1.61.0-nightly
+   LLVM version: 14.0.0
+```
+
+目标三元组通常由三个部分组成：
+
+- 架构（Architecture）：指定处理器架构，如x86_64表示64位的x86处理器架构。
+- 操作系统（Operating System）：指定目标操作系统，如Linux。
+- 库类型（Libc Type）：指定C库类型，如GNU libc。
+
+因此，目标三元组"x86_64-unknown-linux-gnu"表示一个针对x86_64架构、运行在Linux操作系统上，并使用GNU libc作为C库的目标。
+
+#### 修改目标平台
+
+```
+cargo run --target riscv64gc-unknown-none-elf
+   Compiling os v0.1.0 (/home/shinbokuow/workspace/v3/rCore-Tutorial-v3/os)
+error[E0463]: can't find crate for `std`
+  |
+  = note: the `riscv64gc-unknown-none-elf` target may not be installed
+```
+
+报错的原因是目标平台上确实没有 Rust 标准库 std，也不存在任何受 OS 支持的系统调用。 这样的平台被我们称为 **裸机平台** (bare-metal)。
+
+### 移除标准库依赖
+
+首先在 `os` 目录下新建 `.cargo` 目录，并在这个目录下创建 `config` 文件，输入如下内容：
+
+```
+# os/.cargo/config
+[build]
+target = "riscv64gc-unknown-none-elf"
+```
+
+这将使 cargo 工具在 os 目录下默认会使用 riscv64gc-unknown-none-elf 作为目标平台。 这种编译器运行的平台（x86_64）与可执行文件运行的目标平台不同的情况，称为 **交叉编译** (Cross Compile)。
+
+#### 移除println!宏
+
+当在`main.rs`的开头加上`#![no_std]`后重新编译时，出现了找不到`println`宏的错误。
+
+这是因为在使用`#![no_std]`声明后，Rust编译器会告知不使用标准库（std），而是使用核心库（core）。然而，`println!`宏是由标准库提供的，并且它依赖于一个名为`write`的系统调用，这在无标准库环境下是不可用的。
+
+将包含`println!`宏的代码行注释掉或者删除掉。这样，在重新编译时就不会出现相关错误。
+
+#### 提供语义项 panic_handler
+
+当使用核心库（core）而不是标准库（std）时，Rust编译器要求提供一个名为`#[panic_handler]`的函数来处理 panic。这个函数负责在发生 panic 时打印错误位置和原因，并终止当前应用程序。
+
+为了满足这个要求，创建一个名为`lang_items.rs`的文件，并在其中实现一个`#[panic_handler]`函数。通过这样做，告诉编译器使用我自己的实现来处理 panic。
+
+#### 移除main函数
+
+在 `main.rs` 的开头加入设置 `#![no_main]` 告诉编译器我们没有一般意义上的 `main` 函数， 并将原来的 `main` 函数删除。这样编译器也就不需要考虑初始化工作了。
+
+至此，我们终于移除了所有标准库依赖，目前的代码如下：
+
+```rust
+// os/src/main.rs
+#![no_std]
+#![no_main]
+
+mod lang_items;
+
+// os/src/lang_items.rs
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
+}
+```
+
+#### 总结
+
+截至目前，已经进行了一系列操作来移除标准库依赖并为裸机平台构建执行环境。
+
+1.创建项目：使用 cargo new os 命令创建了一个名为 "os" 的二进制（应用程序）包。这个命令生成了一个默认的目录结构和配置文件。
+2.修改目标平台：在项目的 .cargo/config 文件中设置了目标平台为 riscv64gc-unknown-none-elf。这样，Cargo 在构建项目时会使用指定的目标平台。
+3.移除标准库依赖：在 main.rs 文件开头添加了 #![no_std] 属性，告诉编译器不使用标准库。这导致编译器无法找到 println! 宏等标准库相关的功能。
+4.提供 panic 处理函数：在 lang_items.rs 文件中实现了一个 #[panic_handler] 函数，用于处理 panic。这个函数负责在发生 panic 时终止程序执行。
+5.移除 main 函数：在 main.rs 文件开头添加了 #![no_main] 属性，并删除了原来的 main 函数。这表示程序不需要一个传统意义上的 main 函数。
+通过这些更改，成功地为裸机平台构建了一个无标准库的执行环境。
+
+
+
+### 构建用户态执行环境
+
+#### 执行环境初始化
+
+给 Rust 编译器编译器提供入口函数 `_start()`
+
+#### 程序正常退出
+
+目前的执行环境还缺了一个退出机制，我们需要操作系统提供的 `exit` 系统调用来退出程序。
+
+```rust
+// os/src/main.rs
+
+const SYSCALL_EXIT: usize = 93;
+
+fn syscall(id: usize, args: [usize; 3]) -> isize {
+    let mut ret;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            inlateout("x10") args[0] => ret,
+            in("x11") args[1],
+            in("x12") args[2],
+            in("x17") id,
+        );
+    }
+    ret
+}
+
+pub fn sys_exit(xstate: i32) -> isize {
+    syscall(SYSCALL_EXIT, [xstate as usize, 0, 0])
+}
+
+#[no_mangle]
+extern "C" fn _start() {
+    sys_exit(9);
+}
+```
+
+ `_start` 函数调用了一个 `sys_exit` 函数， 向操作系统发出了退出的系统调用请求，退出码为 `9`
+
+##### QEMU有两种运行模式：
+
+`User mode` 模式，即用户态模拟，如 `qemu-riscv64` 程序， 能够模拟不同处理器的用户态指令的执行，并可以直接解析ELF可执行文件， 加载运行那些为不同处理器编译的用户级Linux应用程序。
+
+`System mode` 模式，即系统态模式，如 `qemu-system-riscv64` 程序， 能够模拟一个完整的基于不同CPU的硬件系统，包括处理器、内存及其他外部设备，支持运行完整的操作系统。
+
+#### 有显示支持的用户态执行环境
+
+首先封装一下对 `SYSCALL_WRITE` 系统调用。
+
+```rust
+const SYSCALL_WRITE: usize = 64;
+
+pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
+  syscall(SYSCALL_WRITE, [fd, buffer.as_ptr() as usize, buffer.len()])
+}
+```
+
+然后实现基于 `Write` Trait 的数据结构，并完成 `Write` Trait 所需要的 `write_str` 函数，并用 `print` 函数进行包装。
+
+```
+struct Stdout;
+
+impl Write for Stdout {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        sys_write(1, s.as_bytes());
+        Ok(())
+    }
+}
+
+pub fn print(args: fmt::Arguments) {
+    Stdout.write_fmt(args).unwrap();
+}
+```
+
+最后，实现基于 `print` 函数，实现Rust语言 **格式化宏** ( [formatting macros](https://doc.rust-lang.org/std/fmt/#related-macros) )。
+
+```
+#[macro_export]
+macro_rules! print {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        $crate::console::print(format_args!($fmt $(, $($arg)+)?));
+    }
+}
+
+#[macro_export]
+macro_rules! println {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        print(format_args!(concat!($fmt, "\n") $(, $($arg)+)?));
+    }
+}
+```
+
+接下来，我们调整一下应用程序，让它发出显示字符串和退出的请求：
+
+```
+#[no_mangle]
+extern "C" fn _start() {
+    println!("Hello, world!");
+    sys_exit(9);
+}
+```
+
+现在的主文件：
+
+```
+#![no_std]
+#![no_main]
+
+const SYSCALL_WRITE: usize = 64;
+
+fn syscall(id: usize, args: [usize; 3]) -> isize {
+    let mut ret;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            inlateout("x10") args[0] => ret,
+            in("x11") args[1],
+            in("x12") args[2],
+            in("x17") id,
+        );
+    }
+    ret
+}
+
+pub fn sys_write(fd: usize, buffer: &[u8]) -> isize {
+    syscall(SYSCALL_WRITE, [fd, buffer.as_ptr() as usize, buffer.len()])
+}
+
+struct Stdout;
+
+impl core::fmt::Write for Stdout {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        sys_write(1, s.as_bytes());
+        Ok(())
+    }
+}
+
+pub fn print(args: core::fmt::Arguments) {
+    let _ = core::fmt::write(&mut Stdout, args);
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::console::print(format_args!($($arg)*));
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    () => {
+        $crate::print!("\n");
+    };
+    ($($arg:tt)*) => {
+        $crate::print!("{}\n", format_args!($($arg)*));
+    };
+}
+
+#[no_mangle]
+extern "C" fn _start() {
+    println!("Hello, world!");
+    sys_exit(9);
+}
+
+mod lang_items;
+
+```
+
+截止到现在出现的结果：
+
+![1](D:\Users\12647\Desktop\1.png)
+
+### 构建裸机执行环境
+
+#### 裸机启动过程
+
+用通俗的语言解释就是：
+
+当我们启动一个虚拟的计算机时，就像给它通电一样。这个计算机内部有一些特殊的程序和代码，类似于引导程序，它们会在计算机启动时运行。
+
+在启动过程中，首先加载一个叫做 RustSBI 的引导程序，它负责初始化计算机的硬件并为操作系统做准备。
+
+接着，我们将操作系统的二进制代码加载到计算机的内存中的一个特定位置。这些代码是操作系统的核心部分，定义了操作系统要执行的任务和功能。
+
+当加载完毕后，计算机会跳转到操作系统代码所在的位置，并开始执行第一条指令。这样，操作系统就正式开始运行了。
+
+简而言之，裸机启动过程就是给虚拟计算机通电，然后加载引导程序和操作系统代码，最终让操作系统开始执行它自己的任务和功能。
+
+#### 实现关机功能
+
+当我们编写操作系统时，我们需要与底层硬件进行交互来执行一些特殊的操作，例如关机。但是，直接在应用程序中执行这些操作是不安全且不被允许的。为了解决这个问题，我们使用了SBI（Supervisor Binary Interface）规范。
+
+SBI规范定义了一个标准的接口，允许操作系统通过特权指令与底层硬件进行通信。它将底层硬件和操作系统之间的交互进行了抽象，提供了一组功能调用，如关机、打印输出等。这样，操作系统可以通过调用这些功能来实现必要的操作。
+
+在代码中，我们使用了RustSBI作为SBI规范的实现，它提供了对底层硬件的访问接口。具体而言，我们定义了一个`sbi_call`函数，它通过调用底层处理器指令来执行SBI功能。在这里，我们将SBI功能号设置为8，代表关机操作。
+
+然后，我们在`shutdown()`函数中调用`sbi_call`来执行关机操作。这个函数只是简单地调用SBI的关机功能，并且在关机后触发了一个panic异常。
+
+最后，在程序的入口点`_start()`函数中，我们调用`shutdown()`函数来执行关机操作。然而，由于程序的内存布局和栈空间没有正确设置，导致程序无法正常退出，进入了一个死循环。
+
+要解决这个问题，我们需要修改程序的内存布局和栈空间设置，确保程序在正确的地址上运行，并且能够正常退出。
+
+#### 设置正确的程序内存布局
+
+当我们写操作系统时，需要告诉计算机如何存储和运行我们的代码。这就像给计算机提供一份指南，告诉它应该把哪些东西放在哪里。
+
+链接脚本就是这个指南，它告诉计算机在内存中安排我们的程序。它指定了程序的入口点，也就是从哪里开始执行代码。
+
+我们修改了链接脚本来调整程序的内存布局。通过设置一个特殊的起始地址，我们告诉计算机从哪里开始存储我们的代码和数据。
+
+链接脚本还规定了不同部分的位置。比如，代码段（存储程序的指令）应该放在哪里、只读数据段（存储常量）应该放在哪里、可写数据段（存储变量）应该放在哪里等等。这样，计算机可以正确地访问和执行这些部分。
+
+通过修改链接脚本，我们确保生成的可执行文件按照我们期望的方式在内存中布局。这样做有助于确保程序能够正常运行，并且能够在适当的时候结束。
+
+给出的代码通过修改链接脚本（linker script）来调整链接器的行为，以便生成符合预期的可执行文件内存布局。
+
+在Cargo的配置文件中，我们指定了目标平台为 `riscv64gc-unknown-none-elf`。并在该目标平台下的配置中，使用了自定义的链接脚本 `os/src/linker.ld`。
+
+链接脚本 `linker.ld` 的作用是告诉链接器如何组织可执行文件的内存布局。具体内容如下：
+
+1. 第2行设置了程序的入口点为之前定义的全局符号 `_start`。
+2. 第3行定义了一个常量 `BASE_ADDRESS`，其值为 `0x80200000`。这是RustSBI所期望的操作系统起始地址。
+3. 接下来的部分定义了不同的段（section），包括代码段 `.text`、只读数据段 `.rodata`、数据段 `.data` 和 bss段（未初始化的数据段）`.bss`。这些段按照从低地址到高地址的顺序进行排列，并且每个段都有两个全局变量给出其起始和结束地址。
+
+通过修改链接脚本，我们可以确保生成的可执行文件具有正确的内存布局，使得各个段按照我们的预期进行放置。
+
+#### 正确配置栈空间布局
+
+当我们写操作系统时，需要为它分配一块特殊的内存空间来保存临时数据。这个内存空间就像是一个堆栈，用来存储程序执行过程中的一些重要信息。
+
+在这段代码中，我们告诉计算机如何设置这个堆栈内存空间。首先，我们预留了一块足够大的内存空间作为堆栈，并给它起了一个名字叫做`.bss.stack`。
+
+然后，我们定义了两个全局符号，一个叫做`boot_stack`，表示堆栈的底部地址，另一个叫做`boot_stack_top`，表示堆栈的顶部地址。
+
+接下来，我们通过汇编语言编写了一个函数`_start`，它是操作系统的入口点。在这个函数中，我们把堆栈的顶部地址存储到寄存器`sp`中，这样计算机就知道从哪里开始使用堆栈了。
+
+最后，我们在`main.rs`中声明了应用程序的入口函数`rust_main`，并使用宏把汇编代码嵌入到了代码中。
+
+通过这些步骤，我们成功地初始化了操作系统的堆栈内存空间，并定义了应用程序的入口函数。这样，当我们运行操作系统时，计算机会按照我们设定的方式来使用堆栈，并执行应用程序的入口函数。
+
+#### 清空 .bss 段
+
+#### 添加裸机打印相关函数
+
+最后的结果！
+
+![2](D:\Users\12647\Desktop\2.png)
